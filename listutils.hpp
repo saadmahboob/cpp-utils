@@ -9,8 +9,8 @@ namespace util
 {
     namespace list
     {
-        class EmptyListException : std::exception {};
-        class NotEnoughElementsException : std::exception {};
+        class empty_list_exception : std::exception {};
+        class not_enough_elements_exception : std::exception {};
         
         template<class IterType>
         int length(IterType _begin, IterType _end)
@@ -50,10 +50,10 @@ namespace util
         auto foldl1(IterType _begin, IterType _end, Fun _fn)
             -> decltype(_fn(*_begin,*_end))
         {
-            if(_begin == _end) throw EmptyListException();
+            if(_begin == _end) throw empty_list_exception();
             typedef decltype(*_begin) ElemType;
             ElemType first = *_begin++;
-            if(_begin == _end) throw NotEnoughElementsException();
+            if(_begin == _end) throw not_enough_elements_exception();
             auto seed = _fn(first, *_begin++);
             return foldl(_begin, _end, seed, _fn);
         }

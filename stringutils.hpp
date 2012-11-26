@@ -76,6 +76,23 @@ namespace util
             
             return _string.substr(start, end - start);
         }
+        
+        template<typename T>
+        inline T to(const std::string &_string)
+        {
+            std::stringstream convert(_string);
+            T result;
+            convert >> result;
+            return result;
+        }
+        
+        template<typename T>
+        inline std::string from(const T &_value)
+        {
+            std::stringstream convert;
+            convert << _value;
+            return convert.str();
+        }
     };
 };
 
