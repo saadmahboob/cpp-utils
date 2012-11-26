@@ -12,6 +12,7 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <netdb.h>
+    #include <unistd.h>
 #endif
 
 namespace util
@@ -99,9 +100,11 @@ namespace util
                 : base_socket(_move.mService), mSocket(_move.mSocket), mIP(_move.mIP) {
                 _move.mSocket = invalid_socket;
             }
-            inline void connect(const std::string &_target, int _port) {
+            inline void connect_async(const std::string &_target, int _port) {
+            }
+            inline bool connect(const std::string &_target, int _port) {
                 if(mSocket != invalid_socket)
-                    throw socket_exception("socket already connected");               
+                    throw socket_exception("socket already connected");             
                 mSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
                 if(mSocket == invalid_socket)
                     throw socket_exception("failed to create socket");
@@ -112,7 +115,9 @@ namespace util
                 addr.sin_addr = ((socket_address*)resolved.ai_addr)->sin_addr;
                 auto returnValue = ::connect(mSocket, (sockaddr*)&addr, sizeof(addr));
                 if(returnValue != 0)
-                    throw socket_exception("failed to connect socket to '" + _target + "'");
+                    return false;
+                mIP = _target;
+                return true;
             }
             inline void write_async(const std::string &_data, std::function<void(client&,int)> _callback) {
                 write_async(_data.c_str(), _data.length(), _callback);
@@ -123,14 +128,16 @@ namespace util
                 return write(_data.c_str(), _data.length());
             }
             inline int write(const char *_data, int _count) {
-                return 0; // stub
+                return ::send(mSocket, _data, _count, 0);
             }
             inline void read_async(char *_data, int _size, std::function<void(client&,int)> _callback) {
             }
             inline int read(char *_data, int _size) {
-                return 0; // stub
+                return ::recv(mSocket, _data, _size, 0);
             }
             inline void close() {
+                ::close(mSocket);
+                mSocket = invalid_socket;
             }
             inline const std::string &ip() const { return mIP; }
         private:
