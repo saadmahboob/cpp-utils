@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <cstring>
+#include <stdio.h>
 #include <list>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -13,6 +14,9 @@
     #include <netinet/in.h>
     #include <netdb.h>
     #include <unistd.h>
+    #include <errno.h>
+    #include <sys/ioctl.h>
+    #include <sys/poll.h>
 #endif
 
 namespace util
@@ -28,6 +32,16 @@ namespace util
             std::string mMessage;
         };
         
+        inline void __throw_error_with_number(const std::string &message) {
+            #if defined(_WIN32) || defined(_WIN64)
+                int error = WSAGetLastError();
+            #else
+                int error = errno;
+            #endif
+            
+            throw socket_exception(message + ": error code (" + util::string::from(error) + ")");
+        }
+        
         typedef int socket;
         typedef hostent host_entity;
         
@@ -36,15 +50,17 @@ namespace util
         #if defined(_WIN32) || defined(_WIN64)
             typedef SOCKADDR_IN socket_address;
             typedef ADDRINFOA address_info;
+            typedef WSAPOLLFD poll_descriptor;
         #else
             typedef sockaddr_in socket_address;
             typedef addrinfo address_info;
+            typedef pollfd poll_descriptor;
         #endif
         
-        template<class StorageType = std::list<address_info>>
-        StorageType resolve(const std::string &_hostname)
+        template<class storage_type = std::list<address_info>>
+        storage_type resolve(const std::string &_hostname)
         {
-            StorageType result;
+            storage_type result;
             address_info *hosts;
             
             address_info hints;
@@ -56,7 +72,7 @@ namespace util
             auto returnValue = getaddrinfo(_hostname.c_str(), nullptr, &hints, &hosts);
 
             if(returnValue != 0)
-                throw socket_exception("getaddrinfo() call failed whilst resolving '" + _hostname + "'");
+                __throw_error_with_number("getaddrinfo() call failed whilst resolving '" + _hostname + "'");
 
             for(address_info *addr = hosts; addr != nullptr; addr = addr->ai_next)
             {
@@ -68,7 +84,7 @@ namespace util
             return result;
         }
         
-        address_info resolve_to_any(const std::string &_hostname)
+        inline address_info resolve_to_any(const std::string &_hostname)
         {
             auto result = resolve(_hostname);
             if(result.empty())
@@ -76,13 +92,35 @@ namespace util
             return result.front();
         }
         
-        class service
+        inline void set_nonblocking(socket _socket, int _argument)
         {
-        public:
-            inline void run() {
-            }
-        private:
-        };
+            #if defined(_WIN32) || defined(_WIN64)
+                ioctlsocket(_socket, FIONBIO, &_argument);
+            #else
+                ioctl(_socket, FIONBIO, &_argument);
+            #endif
+        }
+        
+        inline void make_nonblocking(socket _socket)
+        {
+            set_nonblocking(_socket, 1);
+        }
+        
+        inline void make_blocking(socket _socket)
+        {
+            set_nonblocking(_socket, 0);
+        }
+        
+        inline void shutdown_socket(socket _socket)
+        {
+            #if defined(_WIN32) || defined(_WIN64)
+                ::shutdown(_socket, SD_BOTH);
+            #else
+                ::shutdown(_socket, SHUT_RDWR);
+            #endif
+        }
+        
+        class service;
         
         class base_socket
         {
@@ -92,28 +130,146 @@ namespace util
             service &mService;
         };
         
+        class socket_event_handler
+        {
+        public:
+            typedef std::function<void()> error_fn;
+            typedef std::function<void()> read_fn;
+            typedef std::function<void()> write_fn;
+        public:
+            inline socket_event_handler()
+                : mSocket(invalid_socket) {}
+            inline socket_event_handler(socket _socket, read_fn _read, write_fn _write, error_fn _error)
+                : mSocket(_socket), mRead(_read), mWrite(_write), mError(_error) {}
+            inline socket_event_handler(const socket_event_handler &_copy)
+                : mSocket(_copy.mSocket), mRead(_copy.mRead), mWrite(_copy.mWrite), mError(_copy.mError) {}
+            inline bool wants_to_read() const { return !!mRead; }
+            inline bool wants_to_write() const { return !!mWrite; }
+            inline void on_read() { std::cout << "socket_event_handler::on_read()" << std::endl; read_fn(); }
+            inline void on_write() { write_fn(); }
+            inline void on_error() { error_fn(); }
+            inline socket handle() const { return mSocket; }
+        private:
+            read_fn mRead;
+            socket mSocket;
+            write_fn mWrite;
+            error_fn mError;
+        };
+        
+        class service
+        {
+        public:
+            inline void add_handler(const socket_event_handler &_handler) {
+                mHandlers.push_back(_handler);
+            }
+            inline bool do_poll(int _timeout = 100) {
+                std::cout << "do_poll" << std::endl;
+                if(mHandlers.size() < 1) return false;
+                
+                std::cout << "copying handlers" << std::endl;
+                std::vector<socket_event_handler> handlers;
+                handlers.insert(handlers.begin(), std::begin(mHandlers), std::end(mHandlers));
+                mHandlers.clear();
+                
+                std::cout << "building descriptor array" << std::endl;
+                std::unique_ptr<poll_descriptor> descriptors(new poll_descriptor[handlers.size()]);
+                
+                for(int i = 0; i < handlers.size(); i++)
+                {
+                    poll_descriptor &descriptor = descriptors.get()[i];
+                    descriptor.fd = handlers[i].handle();
+                    descriptor.events = 0;
+                    if(handlers[i].wants_to_read())
+                        descriptor.events |= POLLIN;
+                    if(handlers[i].wants_to_write())
+                        descriptor.events |= POLLOUT;
+                }
+                
+                std::cout << "performing poll" << std::endl;
+                #if defined(_WIN32) || defined(_WIN64)
+                    auto result = ::WSAPoll(descriptors.get(), handlers.size(), _timeout);
+                #else
+                    auto result = ::poll(descriptors.get(), handlers.size(), _timeout);
+                #endif
+                
+                if(result < 0)
+                    __throw_error_with_number("error performing socket poll");
+                
+                std::cout << "scanning resulting poll" << std::endl;
+                for(int i = 0; i < handlers.size() && result > 0; i++)
+                {
+                    poll_descriptor &descriptor = descriptors.get()[i];
+                    std::cout << "\tdescriptor:" << std::endl;
+                    if(!(descriptor.revents & POLLERR))
+                    {
+                        if(descriptor.revents & POLLIN || descriptor.revents & POLLOUT)
+                        {
+                            result --;
+                            if(descriptor.revents & POLLIN)
+                            {
+                                std::cout << "\t\tread event" << std::endl;
+                                handlers[i].on_read();
+                            }
+                            if(descriptor.revents & POLLOUT)
+                            {
+                                std::cout << "\t\twrite event" << std::endl;
+                                handlers[i].on_write();
+                            }
+                        }
+                        else
+                        {
+                            std::cout << "\t\tno event, preserved" << std::endl;
+                            add_handler(handlers[i]);
+                        }
+                    }
+                    else
+                    {
+                        std::cout << "\t\terror event" << std::endl;
+                        result --;
+                        handlers[i].on_error();
+                    }
+                }
+                
+                std::cout << "do_poll complete!" << std::endl;
+                return true;
+            }
+            inline void run(bool _abort_on_empty=false) {
+                while(do_poll(1000) || !_abort_on_empty);
+            }
+        private:
+            std::list<socket_event_handler> mHandlers;
+        };
+        
         class client : public base_socket
         {
         public:
+            inline client(service &_service, socket _socket) : base_socket(_service), mSocket(_socket) {
+                // TODO: derive IP string? o:
+                mIP = "some-ip-here";
+            }
             inline client(service &_service) : base_socket(_service), mSocket(invalid_socket) {}
             inline client(client &&_move)
                 : base_socket(_move.mService), mSocket(_move.mSocket), mIP(_move.mIP) {
                 _move.mSocket = invalid_socket;
             }
-            inline void connect_async(const std::string &_target, int _port) {
+            inline ~client() {
+                close();
+            }
+            inline void connect_async(const std::string &_target, int _port, std::function<void(client&,bool)> _callback) {
+                make_nonblocking(mSocket);
+                auto returnValue = invokeConnect(_target, _port);
+                mService.add_handler(socket_event_handler(mSocket, nullptr,
+                    [&](){
+                        _callback(*this, true);
+                    },
+                    [&](){
+                        _callback(*this, false);
+                    }
+                ));
             }
             inline bool connect(const std::string &_target, int _port) {
-                if(mSocket != invalid_socket)
-                    throw socket_exception("socket already connected");             
-                mSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                if(mSocket == invalid_socket)
-                    throw socket_exception("failed to create socket");
-                address_info resolved = resolve_to_any(_target);
-                socket_address addr;
-                addr.sin_family = AF_INET;
-                addr.sin_port = htons(_port);
-                addr.sin_addr = ((socket_address*)resolved.ai_addr)->sin_addr;
-                auto returnValue = ::connect(mSocket, (sockaddr*)&addr, sizeof(addr));
+                make_blocking(mSocket);
+                auto returnValue = invokeConnect(_target, _port);
                 if(returnValue != 0)
                     return false;
                 mIP = _target;
@@ -123,23 +279,60 @@ namespace util
                 write_async(_data.c_str(), _data.length(), _callback);
             }
             inline void write_async(const char *_data, int _count, std::function<void(client&,int)> _callback) {
+                make_nonblocking(mSocket);
+                mService.add_handler(socket_event_handler(mSocket, nullptr,
+                    [&](){
+                        auto result = write(_data, _count);
+                        _callback(*this, result);
+                    },
+                    [&](){
+                        _callback(*this, 0);
+                    }
+                ));
             }
             inline int write(const std::string &_data) {
                 return write(_data.c_str(), _data.length());
             }
             inline int write(const char *_data, int _count) {
+                make_blocking(mSocket);
                 return ::send(mSocket, _data, _count, 0);
             }
             inline void read_async(char *_data, int _size, std::function<void(client&,int)> _callback) {
+                make_nonblocking(mSocket);
+                mService.add_handler(socket_event_handler(mSocket,
+                    [&](){
+                        auto result = read(_data, _size);
+                        _callback(*this, result);
+                    }, nullptr,
+                    [&](){
+                        _callback(*this, 0);
+                    }
+                ));
             }
             inline int read(char *_data, int _size) {
+                make_blocking(mSocket);
                 return ::recv(mSocket, _data, _size, 0);
             }
             inline void close() {
+                shutdown_socket(mSocket);
                 ::close(mSocket);
                 mSocket = invalid_socket;
             }
             inline const std::string &ip() const { return mIP; }
+        private:
+            inline int invokeConnect(const std::string &_target, int _port) {
+                if(mSocket != invalid_socket)
+                    throw socket_exception("socket already connected");
+                mSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if(mSocket == invalid_socket)
+                    __throw_error_with_number("failed to create socket");
+                address_info resolved = resolve_to_any(_target);
+                socket_address addr;
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(_port);
+                addr.sin_addr = ((socket_address*)resolved.ai_addr)->sin_addr;
+                return ::connect(mSocket, (sockaddr*)&addr, sizeof(addr));
+            }
         private:
             socket mSocket;
             std::string mIP;
@@ -148,14 +341,52 @@ namespace util
         class server : public base_socket
         {
         public:
-            inline server(service &_service, int _port) : base_socket(_service), mPort(_port), mSocket(invalid_socket) {
+            inline server(service &_service, int _port) : base_socket(_service), mPort(_port), mSocket(invalid_socket) {}
+            inline server(server &&_move) : base_socket(_move.mService), mSocket(_move.mSocket) {
+                _move.mSocket = invalid_socket;
             }
-            inline server(server &&_move) : base_socket(_move.mService) {
+            inline ~server() {
+                shutdown_socket(mSocket);
+                ::close(mSocket);
+                mSocket = invalid_socket;
             }
-            inline void accept_async(std::function<void(server&)> _callback) {
+            inline void configure() {
+                if(mSocket != invalid_socket)
+                    throw socket_exception("server already configured");
+                    
+                mSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if(mSocket == invalid_socket)
+                    __throw_error_with_number("failed to create socket"); 
+                socket_address addr;
+                
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(mPort);
+                addr.sin_addr.s_addr = htonl(INADDR_ANY);
+                
+                auto bindResult = ::bind(mSocket, (sockaddr*)&addr, sizeof(addr));
+                if(bindResult < 0)
+                    __throw_error_with_number("failed to bind server");
+                
+                ::listen(mSocket, SOMAXCONN);
+            }
+            inline void accept_async(std::function<void(server&,bool)> _callback) {
+                std::cout << "registering for async accept" << std::endl;
+                mService.add_handler(socket_event_handler(mSocket,
+                    [&](){
+                        std::cout << "accept_async read callback" << std::endl;
+                        _callback(*this, true);
+                    }, nullptr,
+                    [&](){
+                        std::cout << "accept_async error callback" << std::endl;
+                        _callback(*this, false);
+                    }
+                ));
             }
             inline client accept() {
-                return client(mService); // STUB
+                socket_address addr;
+                auto addr_size = sizeof(addr);
+                socket accepted = ::accept(mSocket, (sockaddr*)&addr, &addr_size);
+                return client(mService, accepted);
             }
             inline int port() const { return mPort; }
         private:
