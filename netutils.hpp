@@ -145,9 +145,9 @@ namespace util
                 : mSocket(_copy.mSocket), mRead(_copy.mRead), mWrite(_copy.mWrite), mError(_copy.mError) {}
             inline bool wants_to_read() const { return !!mRead; }
             inline bool wants_to_write() const { return !!mWrite; }
-            inline void on_read() { std::cout << "socket_event_handler::on_read()" << std::endl; read_fn(); }
-            inline void on_write() { write_fn(); }
-            inline void on_error() { error_fn(); }
+            inline void on_read() { mRead(); }
+            inline void on_write() { mWrite(); }
+            inline void on_error() { mError(); }
             inline socket handle() const { return mSocket; }
         private:
             read_fn mRead;
@@ -163,15 +163,12 @@ namespace util
                 mHandlers.push_back(_handler);
             }
             inline bool do_poll(int _timeout = 100) {
-                std::cout << "do_poll" << std::endl;
                 if(mHandlers.size() < 1) return false;
                 
-                std::cout << "copying handlers" << std::endl;
                 std::vector<socket_event_handler> handlers;
                 handlers.insert(handlers.begin(), std::begin(mHandlers), std::end(mHandlers));
                 mHandlers.clear();
                 
-                std::cout << "building descriptor array" << std::endl;
                 std::unique_ptr<poll_descriptor> descriptors(new poll_descriptor[handlers.size()]);
                 
                 for(int i = 0; i < handlers.size(); i++)
@@ -185,7 +182,6 @@ namespace util
                         descriptor.events |= POLLOUT;
                 }
                 
-                std::cout << "performing poll" << std::endl;
                 #if defined(_WIN32) || defined(_WIN64)
                     auto result = ::WSAPoll(descriptors.get(), handlers.size(), _timeout);
                 #else
@@ -195,11 +191,9 @@ namespace util
                 if(result < 0)
                     __throw_error_with_number("error performing socket poll");
                 
-                std::cout << "scanning resulting poll" << std::endl;
                 for(int i = 0; i < handlers.size() && result > 0; i++)
                 {
                     poll_descriptor &descriptor = descriptors.get()[i];
-                    std::cout << "\tdescriptor:" << std::endl;
                     if(!(descriptor.revents & POLLERR))
                     {
                         if(descriptor.revents & POLLIN || descriptor.revents & POLLOUT)
@@ -207,30 +201,25 @@ namespace util
                             result --;
                             if(descriptor.revents & POLLIN)
                             {
-                                std::cout << "\t\tread event" << std::endl;
                                 handlers[i].on_read();
                             }
                             if(descriptor.revents & POLLOUT)
                             {
-                                std::cout << "\t\twrite event" << std::endl;
                                 handlers[i].on_write();
                             }
                         }
                         else
                         {
-                            std::cout << "\t\tno event, preserved" << std::endl;
                             add_handler(handlers[i]);
                         }
                     }
                     else
                     {
-                        std::cout << "\t\terror event" << std::endl;
                         result --;
                         handlers[i].on_error();
                     }
                 }
                 
-                std::cout << "do_poll complete!" << std::endl;
                 return true;
             }
             inline void run(bool _abort_on_empty=false) {
@@ -373,11 +362,9 @@ namespace util
                 std::cout << "registering for async accept" << std::endl;
                 mService.add_handler(socket_event_handler(mSocket,
                     [&](){
-                        std::cout << "accept_async read callback" << std::endl;
                         _callback(*this, true);
                     }, nullptr,
                     [&](){
-                        std::cout << "accept_async error callback" << std::endl;
                         _callback(*this, false);
                     }
                 ));
