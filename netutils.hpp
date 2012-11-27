@@ -170,6 +170,7 @@ namespace util
                 mHandlers.clear();
                 
                 std::unique_ptr<poll_descriptor> descriptors(new poll_descriptor[handlers.size()]);
+                std::unique_ptr<bool> preserve_flags(new bool[handlers.size()]);
                 
                 for(int i = 0; i < handlers.size(); i++)
                 {
@@ -180,6 +181,7 @@ namespace util
                         descriptor.events |= POLLIN;
                     if(handlers[i].wants_to_write())
                         descriptor.events |= POLLOUT;
+                    preserve_flags.get()[i] = true;
                 }
                 
                 #if defined(_WIN32) || defined(_WIN64)
@@ -194,29 +196,32 @@ namespace util
                 for(int i = 0; i < handlers.size() && result > 0; i++)
                 {
                     poll_descriptor &descriptor = descriptors.get()[i];
+                    
                     if(!(descriptor.revents & POLLERR))
                     {
                         if(descriptor.revents & POLLIN || descriptor.revents & POLLOUT)
                         {
                             result --;
+                            preserve_flags.get()[i] = false;
                             if(descriptor.revents & POLLIN)
-                            {
                                 handlers[i].on_read();
-                            }
                             if(descriptor.revents & POLLOUT)
-                            {
                                 handlers[i].on_write();
-                            }
-                        }
-                        else
-                        {
-                            add_handler(handlers[i]);
                         }
                     }
                     else
                     {
                         result --;
+                        preserve_flags.get()[i] = false;
                         handlers[i].on_error();
+                    }
+                }
+                
+                for(int i = 0; i < handlers.size(); i++)
+                {
+                    if(preserve_flags.get()[i])
+                    {
+                        add_handler(handlers[i]);
                     }
                 }
                 
@@ -248,10 +253,10 @@ namespace util
                 make_nonblocking(mSocket);
                 auto returnValue = invokeConnect(_target, _port);
                 mService.add_handler(socket_event_handler(mSocket, nullptr,
-                    [&](){
+                    [=](){
                         _callback(*this, true);
                     },
-                    [&](){
+                    [=](){
                         _callback(*this, false);
                     }
                 ));
@@ -270,11 +275,11 @@ namespace util
             inline void write_async(const char *_data, int _count, std::function<void(client&,int)> _callback) {
                 make_nonblocking(mSocket);
                 mService.add_handler(socket_event_handler(mSocket, nullptr,
-                    [&](){
+                    [=](){
                         auto result = write(_data, _count);
                         _callback(*this, result);
                     },
-                    [&](){
+                    [=](){
                         _callback(*this, 0);
                     }
                 ));
@@ -289,11 +294,11 @@ namespace util
             inline void read_async(char *_data, int _size, std::function<void(client&,int)> _callback) {
                 make_nonblocking(mSocket);
                 mService.add_handler(socket_event_handler(mSocket,
-                    [&](){
+                    [=](){
                         auto result = read(_data, _size);
                         _callback(*this, result);
                     }, nullptr,
-                    [&](){
+                    [=](){
                         _callback(*this, 0);
                     }
                 ));
@@ -359,12 +364,13 @@ namespace util
                 ::listen(mSocket, SOMAXCONN);
             }
             inline void accept_async(std::function<void(server&,bool)> _callback) {
-                std::cout << "registering for async accept" << std::endl;
+                if(!_callback)
+                    throw socket_exception("invalid callback passed to accept_async()");
                 mService.add_handler(socket_event_handler(mSocket,
-                    [&](){
+                    [=](){
                         _callback(*this, true);
                     }, nullptr,
-                    [&](){
+                    [=](){
                         _callback(*this, false);
                     }
                 ));
@@ -373,6 +379,8 @@ namespace util
                 socket_address addr;
                 auto addr_size = sizeof(addr);
                 socket accepted = ::accept(mSocket, (sockaddr*)&addr, &addr_size);
+                if(accepted == invalid_socket)
+                    __throw_error_with_number("failed to accept connection");
                 return client(mService, accepted);
             }
             inline int port() const { return mPort; }
