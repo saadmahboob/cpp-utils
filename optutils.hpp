@@ -52,6 +52,12 @@ namespace util
 			inline const std::string &argument() const { return mArgument; }
 			template<typename T>
 			inline T get_as() const { return util::string::to<T>(mArgument); }
+			template<typename T>
+			inline T get_as(T _default) const {
+				if(mArgument.empty())
+					return _default;
+				return get_as<T>();
+			}
 			inline bool operator<(const passed_option &_other) const {
 				return (mOption < _other.get_option());
 			}
