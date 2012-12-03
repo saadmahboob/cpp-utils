@@ -66,8 +66,8 @@ namespace util
         
         inline std::string strip(const std::string &_string)
         {
-            int start = 0;
-            int end = _string.length();
+            unsigned int start = 0;
+            unsigned int end = _string.length();
             
             while(start < _string.length() && isspace(_string[start]))
                 start++;
