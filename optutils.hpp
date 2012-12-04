@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdexcept>
 #include <iostream>
 #include <set>
 
@@ -9,23 +10,14 @@ namespace util
 {
 	namespace opt
 	{
-		class opt_exception : public std::exception {
-		public:
-			inline opt_exception(const std::string &_message="opt_exception")
-				: mMessage(_message) {}
-			inline const char *what() const throw()
-				{ return mMessage.c_str(); }
-		private:
-			std::string mMessage;
-		};
-
 		class option
 		{
 		public:
-			inline option(const std::string &_opt, bool _parameters, bool _long)
-				: mOption(_opt), mParameters(_parameters), mLong(_long) {}
+			inline option(const std::string &_opt, bool _parameters, bool _long, const std::string _documentation="")
+				: mOption(_opt), mParameters(_parameters), mLong(_long), mDocumentation(_documentation) {}
 			inline bool is_expecting_parameters() const { return mParameters; }
 			inline const std::string &name() const { return mOption; }
+			inline const std::string &documentation() const { return mDocumentation; }
 			inline bool is_long() const { return mLong; }
 			inline bool is_option(const std::string &_opt) const {
 				if(mOption == _opt)
@@ -41,6 +33,7 @@ namespace util
 			bool mLong;
 			bool mParameters;
 			std::string mOption;
+			std::string mDocumentation;
 		};
 
 		class passed_option
@@ -69,26 +62,33 @@ namespace util
 		class parse_result
 		{
 		public:
+			inline void add(const std::string &_nonoption) {
+				mNonOptions.push_back(_nonoption);
+			}
 			inline bool add(const passed_option &_passed, bool _errors) {
 				auto ret = mOptions.insert(_passed);
 				if(!ret.second && _errors)
-					throw opt_exception("option '" + _passed.get_option().name() + "' already set");
+					throw std::runtime_error("option '" + _passed.get_option().name() + "' already set");
 				return ret.second;
 			}
-			inline bool has_option(const std::string &_option) {
+			inline bool has_option(const std::string &_option) const {
 				passed_option dummy(option(_option, false, false));
 				auto ret = mOptions.find(dummy);
 				return (ret != mOptions.end());
 			}
-			inline passed_option get_option(const std::string &_option) {
+			inline passed_option get_option(const std::string &_option) const {
 				passed_option dummy(option(_option, false, false));
 				auto ret = mOptions.find(dummy);
 				if(ret == mOptions.end())
-					throw opt_exception("unprovided option '" + _option + "'");
+					throw std::runtime_error("unprovided option '" + _option + "'");
 				return *ret;
+			}
+			inline const std::vector<std::string> &nonoptions() const {
+				return mNonOptions;
 			}
 		private:
 			std::set<passed_option> mOptions;
+			std::vector<std::string> mNonOptions;
 		};
 
 		class parser
@@ -97,7 +97,7 @@ namespace util
 			inline bool add(const option &_option, bool _error=true) {
 				auto ret = mOptions.insert(_option);
 				if(!ret.second && _error)
-					throw opt_exception("added argument '" + _option.name() + "' that conflicts");
+					throw std::runtime_error("added argument '" + _option.name() + "' that conflicts");
 				return ret.second;
 			}
 			inline bool has(const std::string &_option) const {
@@ -114,7 +114,6 @@ namespace util
 			inline parse_result parse(const util::string_vector &_args, bool _errors=true) {
 				parse_result result;
 				std::string optionName;
-				std::cout << "parsing: " << util::list::stringify(_args) << std::endl;
 				bool expectingArgument = false;
 				util::string_vector::const_iterator last_arg;
 				for(auto i = std::begin(_args); i != std::end(_args); i++) {
@@ -124,7 +123,7 @@ namespace util
 							optionName = get_option_name(argument);
 							if(!has(optionName)) {
 								if(_errors)
-									throw opt_exception("invalid option '" + argument + "'");
+									throw std::runtime_error("invalid option '" + argument + "'");
 							} else {
 								option opt = get_option(optionName);
 								if(opt.is_expecting_parameters())
@@ -132,6 +131,8 @@ namespace util
 								else
 									result.add(passed_option(opt), _errors);
 							}
+						} else {
+							result.add(argument);
 						}
 					} else {
 						expectingArgument = false;
@@ -168,7 +169,7 @@ namespace util
 					}
 				);
 				if(ret == mOptions.end())
-					throw opt_exception("internal error: attempted to get invalid option");
+					throw std::runtime_error("internal error: attempted to get invalid option");
 				return *ret;
 			}
 		private:
