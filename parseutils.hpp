@@ -91,10 +91,63 @@ namespace util
 					error("expected '" + _expected + "', got: '" + _expected.substr(0, index) + "'");
 				return (index < _expected.size());
 			}
-		private:
+			inline std::string read_string() {
+				skip_expected("\"");
+				bool escaped = false;
+				std::string result = "";
+				while(!eof() && (escaped || peek() != '\"')) {
+					char c = get();
+					if(!escaped) {
+						if(c == '\\')
+							escaped = true;
+						else
+							result += c;
+					} else {
+						escaped = false;
+						switch(c) {
+							case '\\': result += '\\'; break;
+							case 't':  result += '\t'; break;
+							case 'n':  result += '\n'; break;
+							case 'r':  result += '\r'; break;
+							case 'a':  result += '\a'; break;
+							case 'f':  result += '\f'; break;
+							default:
+								error(std::string("unknown escape character: '") + c + "'");
+						}
+					}
+				}
+				if(eof() || peek() != '\"')
+					error("expected '\"' character at end of string literal");
+				skip_expected("\"");
+				return result;
+			}
+			inline bool peek_match(const std::string &_valid) {
+				return (_valid.find(peek()) != -1);
+			}
+			inline std::string read_integer() {
+				return read_token(isdigit);
+			}
+			inline std::string read_decimal() {
+				bool dot_seen = false;
+				return read_token([=](char _c) mutable -> bool {
+					if(isdigit(_c)) return true;
+					if(_c == '.' && !dot_seen) {
+						dot_seen = true;
+						return true;
+					}
+					return false;
+				});
+			}
+			inline std::string read_token(std::function<bool(char)> _validator) {
+				std::string result;
+				while(_validator(peek()))
+					result += get();
+				return result;
+			}
 			inline void error(const std::string &_message) {
 				throw exception(mPosition, _message);
 			}
+		private:
 			inline char _get() {
 				char result = _peek();
 				mBuffer = mBuffer.substr(1);
@@ -105,11 +158,15 @@ namespace util
 				if(mBuffer.empty() && !mStream.eof()) {
 					load_buffer();
 				}
+				if(mBuffer.empty())
+					error("attempted to read beyond end of file");
 				result = mBuffer.at(0);
 				return result;
 			}
 			inline bool _eof() {
-				return mBuffer.empty() && mStream.eof();
+				if(mBuffer.empty())
+					load_buffer();
+				return (mBuffer.empty());
 			}
 			inline void load_buffer() {
 				std::array<char, 1024> buffer;
