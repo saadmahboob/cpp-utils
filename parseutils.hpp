@@ -35,7 +35,7 @@ namespace util
 		{
 		public:
 			inline reader(std::istream &_stream)
-				: mStream(_stream), mPosition{0,1} {}
+				: mStream(_stream), mPosition{1,1} {}
 			inline bool eof() {
 				return _eof();
 			}
