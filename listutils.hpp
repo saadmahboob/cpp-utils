@@ -5,6 +5,8 @@
 #include <sstream>
 #include <list>
 
+#include "metautils.hpp"
+
 namespace util
 {
     namespace list
@@ -52,6 +54,8 @@ namespace util
         {
             if(_begin == _end) throw empty_list_exception();
             typedef decltype(*_begin) ElemType;
+            static_assert(std::is_same<decltype(_fn(*_begin, *_end)),ElemType>::value,
+                "foldl1 only operates on homogenous lists of type T where the result type of _fn is also T");
             ElemType first = *_begin++;
             if(_begin == _end) throw not_enough_elements_exception();
             auto seed = _fn(first, *_begin++);
@@ -71,12 +75,17 @@ namespace util
             typedef decltype(*_begin) ElemType;
             const std::string seperator = ", ";
             std::string result;
+
+            static_assert(meta::stream_writable<ElemType>::value,
+                "stringify requires that the element type be stream writable (operator<<)");
             
             int len = length(_begin, _end);
             
             auto fn = [&](const std::string &_a, const ElemType &_b) -> std::string {
                 std::stringstream convert;
-                convert << _a << seperator << _b;
+                if(_a != "")
+                    convert << _a << seperator;
+                convert << _b;
                 return convert.str();
             };
 
@@ -85,7 +94,7 @@ namespace util
             else if(len < 2)
                 result = *_begin;
             else
-                result = foldl1(_begin, _end, fn);
+                result = foldl<std::string, IterType, decltype(fn)>(_begin, _end, "", fn);
             
             return std::string("[") + result + std::string("]");
         }
