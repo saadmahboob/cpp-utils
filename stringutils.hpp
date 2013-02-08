@@ -26,7 +26,7 @@ namespace util
                 std::string token;
                 pos = _text.find(_seperator, lpos);
                 
-                if(pos == -1)
+                if(pos == std::string::npos)
                 {
                     token = _text.substr(lpos);
                     done = true;
