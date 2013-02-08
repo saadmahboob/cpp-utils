@@ -18,7 +18,7 @@ namespace util
                             bool _removeEmpty = true)
         {
             StorageType result;
-            size_t lpos = 0, pos = 0;
+            std::string::size_type lpos = 0, pos = 0;
             bool done = false;
             
             while(!done)
