@@ -8,12 +8,12 @@ namespace util {
 	namespace iface {
 		template<typename... T>
 		void connect(event::listener<T...> &_listener, event::notifier<T...> &_source) {
-			_source.listen(&_listener);
+			_listener.listen(_source.public_interface());
 		}
 
 		template<typename... T>
-		void connect(event::listener<T...> &_listener, event::notifier_public<T...> _source) {
-			_source.listen(&_listener);
+		void connect(event::listener<T...> &_listener, event::notifier_public<T...> *_source) {
+			_listener.listen(_source);
 		}
 
 		template<typename ObjA, typename ObjB, typename R, typename... T>

@@ -6,10 +6,20 @@
 
 namespace util {
 	namespace event {
+		// forward declaration
+		template<typename... T>
+		class notifier_public;
+
 		template<typename... T>
 		class listener {
 		public:
+			listener() : mNotifier(nullptr) {}
+			~listener();
+			void listen(notifier_public<T...> *_notifier);
+			void unlisten();
 			virtual void updated(T...) = 0;
+		private:
+			notifier_public<T...> *mNotifier;
 		};
 
 		template<typename... T>
@@ -24,13 +34,10 @@ namespace util {
 			std::function<void(T...)> mLambda;
 		};
 
-		// forward declaration
-		template<typename... T>
-		class notifier_public;
-
 		template<typename... T>
 		class notifier {
 		public:
+			notifier();
 			void notify(T... _arguments)  {
 				for(auto listener : mListeners) {
 					listener->updated(_arguments...);
@@ -42,8 +49,9 @@ namespace util {
 			bool unlisten(listener<T...> *_listener) {
 				return (mListeners.erase(_listener) > 0);
 			}
-			notifier_public<T...> public_interface();
+			notifier_public<T...> *public_interface();
 		private:
+			notifier_public<T...> mPublicInterface;
 			std::set<listener<T...>*> mListeners;
 		};
 
@@ -64,8 +72,34 @@ namespace util {
 		};
 
 		template<typename... T>
-		notifier_public<T...> notifier<T...>::public_interface() {
-			return notifier_public<T...>(*this);
+		listener<T...>::~listener() {
+			unlisten();
+		}
+
+		template<typename... T>
+		void listener<T...>::listen(notifier_public<T...> *_notifier) {
+			if(_notifier != nullptr) {
+				if(mNotifier != nullptr)
+					unlisten();
+				mNotifier = _notifier;
+				mNotifier->listen(this);
+			}
+		}
+
+		template<typename... T>
+		void listener<T...>::unlisten() {
+			if(mNotifier != nullptr) {
+				mNotifier->unlisten(this);
+				mNotifier = nullptr;
+			}
+		}
+
+		template<typename... T>
+		notifier<T...>::notifier() : mPublicInterface(*this) {}
+
+		template<typename... T>
+		notifier_public<T...> *notifier<T...>::public_interface() {
+			return &mPublicInterface;
 		}
 	}
 }
