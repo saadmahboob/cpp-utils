@@ -138,6 +138,21 @@ namespace util
 					return false;
 				});
 			}
+			inline std::string read_hex(bool _prefix=true) {
+				int progress = 0;
+				return read_token([=](char _c) mutable -> bool {
+					int p = progress++;
+					if(p == 0 && _prefix)
+						return (_c == '0');
+					if(p == 1 && _prefix)
+						return (tolower(_c) == 'x');
+					if(_c >= '0' && _c <= '9')
+						return true;
+					if(tolower(_c) >= 'a' && tolower(_c) <= 'f')
+						return true;
+					return false;
+				});
+			}
 			inline std::string read_token(std::function<bool(char)> _validator) {
 				std::string result;
 				while(_validator(peek()))
