@@ -1,5 +1,6 @@
 #pragma once
-#ifndef EVENT_HPP
+#ifndef EVENTUTILS_HPP
+#define EVENTUTILS_HPP
 
 #include <algorithm>
 #include <set>

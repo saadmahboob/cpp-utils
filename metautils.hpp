@@ -1,5 +1,8 @@
 #pragma once
 
+#include <functional>
+#include <ostream>
+
 namespace util
 {
 	namespace meta
@@ -24,5 +27,12 @@ namespace util
         struct stream_writable : public internal::stream_writable<T> {
             using internal::stream_writable<T>::value;
         };
+
+        template<typename Obj, typename R, typename... Args>
+        std::function<R(Args...)> wrap_method(Obj *_object, R (Obj::*_method)(Args...)) {
+            return [&, _object, _method](Args... _args) -> R {
+                return (_object->*_method)(_args...);
+            };
+        }
 	};
 };

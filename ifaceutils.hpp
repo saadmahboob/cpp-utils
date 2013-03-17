@@ -1,8 +1,9 @@
 #pragma once
-#ifndef IFACE_HPP
-#define IFACE_HPP
+#ifndef IFACEUTILS_HPP
+#define IFACEUTILS_HPP
 
-#include "event.hpp"
+#include "metautils.hpp"
+#include "eventutils.hpp"
 
 namespace util {
 	namespace iface {
@@ -18,9 +19,7 @@ namespace util {
 
 		template<typename ObjA, typename ObjB, typename R, typename... T>
 		void connect(ObjA *_a, std::function<R(T...)> (ObjA::*_member), ObjB *_b, R (ObjB::*_method)(T...)) {
-			(_a->*_member) = [&, _b, _method](T... _args) -> R {
-				return (_b->*_method)(_args...);
-			};
+			(_a->*_member) = meta::wrap_method(_b, _method);
 		}
 	}
 }
