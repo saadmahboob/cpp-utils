@@ -3,7 +3,11 @@
 #include <functional>
 #include <cstring>
 #include <stdio.h>
+#include <string>
+#include <memory>
 #include <list>
+
+#include <stringutils.hpp>
 
 #if defined(_WIN32) || defined(_WIN64)
     #include <winsock2.h>
