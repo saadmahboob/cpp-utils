@@ -144,9 +144,9 @@ namespace util
             inline socket_event_handler()
                 : mSocket(invalid_socket) {}
             inline socket_event_handler(socket _socket, read_fn _read, write_fn _write, error_fn _error)
-                : mSocket(_socket), mRead(_read), mWrite(_write), mError(_error) {}
+                : mRead(_read), mSocket(_socket), mWrite(_write), mError(_error) {}
             inline socket_event_handler(const socket_event_handler &_copy)
-                : mSocket(_copy.mSocket), mRead(_copy.mRead), mWrite(_copy.mWrite), mError(_copy.mError) {}
+                : mRead(_copy.mRead), mSocket(_copy.mSocket), mWrite(_copy.mWrite), mError(_copy.mError) {}
             inline bool wants_to_read() const { return !!mRead; }
             inline bool wants_to_write() const { return !!mWrite; }
             inline void on_read() { mRead(); }
@@ -176,7 +176,7 @@ namespace util
                 std::unique_ptr<poll_descriptor> descriptors(new poll_descriptor[handlers.size()]);
                 std::unique_ptr<bool> preserve_flags(new bool[handlers.size()]);
                 
-                for(int i = 0; i < handlers.size(); i++)
+                for(unsigned int i = 0; i < handlers.size(); i++)
                 {
                     poll_descriptor &descriptor = descriptors.get()[i];
                     descriptor.fd = handlers[i].handle();
@@ -197,7 +197,7 @@ namespace util
                 if(result < 0)
                     __throw_error_with_number("error performing socket poll");
                 
-                for(int i = 0; i < handlers.size() && result > 0; i++)
+                for(unsigned int i = 0; i < handlers.size() && result > 0; i++)
                 {
                     poll_descriptor &descriptor = descriptors.get()[i];
                     
@@ -221,7 +221,7 @@ namespace util
                     }
                 }
                 
-                for(int i = 0; i < handlers.size(); i++)
+                for(unsigned int i = 0; i < handlers.size(); i++)
                 {
                     if(preserve_flags.get()[i])
                     {
@@ -255,7 +255,7 @@ namespace util
             }
             inline void connect_async(const std::string &_target, int _port, std::function<void(client&,bool)> _callback) {
                 make_nonblocking(mSocket);
-                auto returnValue = invokeConnect(_target, _port);
+                invokeConnect(_target, _port);
                 mService.add_handler(socket_event_handler(mSocket, nullptr,
                     [=](){
                         _callback(*this, true);
@@ -335,6 +335,79 @@ namespace util
             socket mSocket;
             std::string mIP;
         };
+
+        socket_address make_address(const std::string &_hostname, int _port) {
+            address_info resolved = resolve_to_any(_hostname);
+            socket_address addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(_port);
+            addr.sin_addr = ((socket_address*)resolved.ai_addr)->sin_addr;
+            return addr;
+        }
+
+        class udp_client : public base_socket {
+        public:
+            inline udp_client(service &_service, socket _socket) : base_socket(_service), mSocket(_socket) {
+                // TODO: derive IP string? o:
+                mIP = "some-ip-here";
+            }
+            inline udp_client(service &_service) : base_socket(_service), mSocket(::socket(AF_INET, SOCK_DGRAM, 0)) {}
+            inline udp_client(udp_client &&_move)
+                : base_socket(_move.mService), mSocket(_move.mSocket), mIP(_move.mIP) {
+                _move.mSocket = invalid_socket;
+            }
+            inline ~udp_client() {
+                close();
+            }
+            inline void write_async(const std::string &_data, socket_address _target, std::function<void(udp_client&,int)> _callback) {
+                write_async(_data.c_str(), _data.length(), _target, _callback);
+            }
+            inline void write_async(const char *_data, int _count, socket_address _target, std::function<void(udp_client&,int)> _callback) {
+                make_nonblocking(mSocket);
+                mService.add_handler(socket_event_handler(mSocket, nullptr,
+                    [=](){
+                        auto result = write(_data, _count, _target);
+                        _callback(*this, result);
+                    },
+                    [=](){
+                        _callback(*this, 0);
+                    }
+                ));
+            }
+            inline int write(const std::string &_data, socket_address _target) {
+                return write(_data.c_str(), _data.length(), _target);
+            }
+            inline int write(const char *_data, int _count, socket_address _target) {
+                make_blocking(mSocket);
+                return ::sendto(mSocket, _data, _count, 0, (sockaddr*) &_target, sizeof(_target));
+            }
+            inline void read_async(char *_data, int _size, socket_address &_target, std::function<void(udp_client&,int)> _callback) {
+                make_nonblocking(mSocket);
+                mService.add_handler(socket_event_handler(mSocket,
+                    [=, &_target](){
+                        auto result = read(_data, _size, _target);
+                        _callback(*this, result);
+                    }, nullptr,
+                    [=](){
+                        _callback(*this, 0);
+                    }
+                ));
+            }
+            inline int read(char *_data, int _size, socket_address &_target) {
+                make_blocking(mSocket);
+                unsigned int length = sizeof(_target);
+                return ::recvfrom(mSocket, _data, _size, 0, (sockaddr*) &_target, &length);
+            }
+            inline void close() {
+                shutdown_socket(mSocket);
+                ::close(mSocket);
+                mSocket = invalid_socket;
+            }
+            inline const std::string &ip() const { return mIP; }
+        protected:
+            socket mSocket;
+            std::string mIP;
+        };
         
         class server : public base_socket
         {
@@ -391,6 +464,24 @@ namespace util
         private:
             int mPort;
             socket mSocket;
+        };
+
+        class udp_server : public udp_client {
+        public:
+            inline udp_server(service &_service, int _port)
+                : udp_client(_service), mPort(_port) {
+                mAddress.sin_family = AF_INET;
+                mAddress.sin_port = htons(mPort);
+                mAddress.sin_addr.s_addr = htonl(INADDR_ANY);
+
+                auto bindResult = ::bind(mSocket, (sockaddr*)&mAddress, sizeof(mAddress));
+                if(bindResult < 0)
+                    __throw_error_with_number("failed to bind server");
+            }
+            inline socket_address address() const { return mAddress; }
+        private:
+            int mPort;
+            socket_address mAddress;
         };
     };
 };
